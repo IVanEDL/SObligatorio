@@ -1,0 +1,135 @@
+Analisis de las solucioens
+============================================
+
+SOLUCIÓN 1: PARALELIZACIÓN CON 6 PROCESADORES
+----------------------------------------------
+
+Logica:
+- Aumenta el número de procesadores de 4 a 6
+- Mantiene la misma lógica que la solución base
+- Cada procesador sigue procesando una imagen a la vez y actualizando estadísticas inmediatamente
+
+Modificaciones:
+- Única modificación: cambio de N_PROCESADORES de 4 a 6
+- Resto del código idéntico a Solucion_dada.c
+
+PROS:
+Mayor paralelismo, 6 hilos pueden procesar simultáneamente
+Mejor aprovechamiento de recursos si hay múltiples núcleos disponibles
+Reducción potencial del tiempo total si hay muchas imágenes en cola
+
+CONTRAS:
+Mayor contención en sem_stats, 6 procesadores compiten por acceso a estadísticas
+Más problemas de sincronización, más hilos significa más cambios de contexto
+Mayor uso de memoria: 6 stacks de hilos vs 4
+
+
+SOLUCIÓN 2: BATCHING DE TAREAS (TOMAR 2 IMÁGENES)
+--------------------------------------------------
+
+Logica:
+- Los procesadores intentan tomar 2 imágenes de la cola a la vez
+- Usa sem_trywait() para verificar si hay segunda imagen disponible sin bloquearse
+- Procesa ambas imágenes secuencialmente y luego actualiza estadísticas juntas
+
+Modificaciones:
+- Declara img1, img2 y sospechoso1, sospechoso2
+- Toma primera imagen (bloqueante con sem_wait)
+- Intenta tomar segunda imagen (no bloqueante con sem_trywait)
+- Procesa ambas imágenes si la segunda existe
+- Actualiza estadísticas de ambas imágenes en una sola operación
+
+PROS:
+Reduce presión en sem_cola, menos accesos a la cola compartida
+Menos contención en sem_stats: actualiza estadísticas menos frecuentemente (2 imágenes por vez)
+Mejor aprovechamiento del tiempo de CPU
+Flexible: si no hay segunda imagen, procesa solo una (sin penalización)
+
+CONTRAS:
+Complejidad lógica aumentada: manejo de casos con 1 o 2 imágenes
+Pequeño aumento en memoria por variable (2 imágenes vs 1)
+Puede crear desbalance si un procesador siempre toma 2 imágenes y otros solo 1
+Si hay pocas imágenes, el beneficio se reduce
+
+
+SOLUCIÓN 3: BATCHING DE ESTADÍSTICAS (PROCESAR 3 ANTES DE ACTUALIZAR)
+----------------------------------------------------------------------
+
+Logica:
+- Acumula resultados de 3 imágenes procesadas en un array local
+- Solo actualiza estadísticas globales cuando tiene 3 resultados
+- Reduce drásticamente la contención en sem_stats
+
+Modificaciones:
+- Array sospechosos[3] y contador para acumular resultados
+- Procesa imagen y guarda resultado en array (no actualiza stats inmediatamente)
+- Cuando contador==3, actualiza las 3 estadísticas en una sola operación
+- Manejo especial al final para procesar imágenes pendientes en el buffer
+
+PROS:
+Reducción significativa de contención: 1/3 de las operaciones en sem_stats
+menos tiempo esperando en semáforos
+Estadísticas más eficientes: actualizaciones en bloque
+
+CONTRAS:
+Mayor latencia en estadísticas: puede haber delay hasta 3 imágenes antes de actualizar
+Complejidad aumentada: manejo de buffer y casos finales
+Mayor uso de memoria local: array de 3 ints por procesador
+Riesgo de pérdida de datos: si el programa termina abruptamente, puede perder estadísticas pendientes
+
+
+COMPARACIÓN DIRECTA: TIEMPO Y MEMORIA
+======================================
+
+TIEMPO DE EJECUCIÓN (Rendimiento):
+1. Solución 3 (Batching estadísticas) > Solución 2 (Batching tareas) > Solución 1 (6 procesadores)
+   
+   Razón: Solución 3 reduce más la contención en sem_stats (1/3 de operaciones).
+   Solución 2 reduce contención en cola y stats (2 imágenes por vez).
+   Solución 1 puede aumentar contención si hay pocos núcleos.
+
+2. Solución 1 puede ser mejor que la base si:
+   - Hay muchos núcleos físicos disponibles
+   - La carga de trabajo es muy alta
+   - El cuello de botella está en procesamiento, no en sincronización
+
+USO DE MEMORIA:
+1. Solución 2: +4 bytes por procesador (2 ints) = 16 bytes totales
+2. Solución 3: +12 bytes por procesador (3 ints) = 48 bytes totales
+3. Solución 1: +stack de 2 hilos adicionales (~8-16 KB por hilo) = ~16-32 KB adicionales
+
+   Solución 2 y 3 son muy eficientes en memoria. Solución 1 usa más memoria pero
+   es aceptable para stacks de hilos.
+
+CONTENCIÓN EN SEMÁFOROS:
+- sem_cola: Solución 2 reduce más (menos accesos), Solución 3 igual que base, Solución 1 igual
+- sem_stats: Solución 3 reduce más (1/3), Solución 2 reduce (1/2), Solución 1 aumenta (6 vs 4)
+- sem_items: Todas similares
+
+CONCLUSIONES FINALES
+====================
+
+EFECTIVIDAD EN TIEMPO:
+Solución 3 (Batching estadísticas) es la más ágil en tiempo
+   - Menor contención en sem_stats
+   - Más tiempo procesando, menos esperando
+   
+Solución 2 (Batching tareas) es segunda mejor
+   - Balance entre reducción de contención y simplicidad
+   - Menos contención en cola y stats
+   
+Solución 1 (6 procesadores) depende del hardware
+   - Mejor con múltiples núcleos y alta carga
+   - Puede degradarse por contención en sistemas con pocos núcleos
+
+EFECTIVIDAD EN MEMORIA:
+Solución 2 es la más eficiente 
+Solución 3 es eficiente 
+Solución 1 usa más memoria
+
+En general:
+La Solución 3 ofrece el mejor balance.
+
+La Solución 2 es una buena alternativa si se busca simplicidad con beneficios
+moderados. La Solución 1 solo es recomendable en sistemas con múltiples núcleos
+y alta carga de trabajo.

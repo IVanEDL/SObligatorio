@@ -51,8 +51,8 @@ int main() {
     // Inicializar semáforos en memoria compartida entre hilos (pshared = 0)
     //---------------- COMPLETAR CODIGO ----------------------- 
     // sem_init(&nombre_semaforo, 0, valor_inicial);  
-    sem_init(&sem_ping, 0, 1); // ping inicia
-    sem_init(&sem_pong, 0, 0);
+    sem_init(&sem_ping, 0, 0); // ping inicia
+    sem_init(&sem_pong, 0, 1);
     
     //---------------- COMPLETAR CODIGO ----------------------- 
 
