@@ -1,0 +1,61 @@
+Ejercicio 1 - Contador con Semáforos
+    
+    1.Se agregó un semáforo para proteger el contador:
+        
+        sem_unlink("/sem_contador"); 
+        sem_t *sem_contador = sem_open("/sem_contador", O_CREAT | O_EXCL, 0644, 1);
+    
+    2.Se protegió la sección crítica en los procesos hijo:
+
+        sem_wait(sem_contador);
+        printf("Hijo PID: %d, Padre PPID: %d, Contador: %d\n", getpid(), getppid(), *contador);
+        incrementar(contador);
+        sem_post(sem_contador);
+
+    3.Se agregó limpieza de recursos:
+
+        sem_close(sem_contador);
+        sem_unlink("/sem_contador");
+
+Ejercicio 2 - Ping Pong
+
+    1.Se agregaron dos semáforos:
+
+        sem_t sem_ping;
+        sem_t sem_pong;
+    
+    2.Se modificó la función ping:
+
+        sem_wait(&sem_ping);
+        printf("Ping\n");
+        sem_post(&sem_pong);
+
+    3.Se modificó la función pong:
+
+        sem_wait(&sem_pong);
+        printf("Pong\n");
+        sem_post(&sem_ping);
+
+Ejercicio 3 - Productor-Consumidor
+
+    1.Se agregaron tres semáforos:
+
+        sem_t sem_empty;  // Para espacios vacíos
+        sem_t sem_full;   // Para elementos en buffer
+        sem_t sem_mutex;  // Para exclusión mutua
+
+    2.Se implementó la sincronización del productor:
+
+        sem_wait(&sem_empty);
+        sem_wait(&sem_mutex);
+        guardar(item);
+        sem_post(&sem_mutex);
+        sem_post(&sem_full);
+
+    3.Se implementó la sincronización del consumidor
+
+        sem_wait(&sem_full);
+        sem_wait(&sem_mutex);
+        item = tomar();
+        sem_post(&sem_mutex);
+        sem_post(&sem_empty);
