@@ -1,0 +1,209 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <semaphore.h>
+#include "include/auxiliares.h"
+
+#define N_PROCESADORES 4
+
+// --------- ESPACIOS COMPARTIDOS ---------
+cola_imagenes_t cola;
+estadisticas_t global_stats;
+
+int esperando = 0; 
+int cant_norm = 0;
+int cant_prio = 0;
+int fin_receptor = 0; // bandera de fin
+
+// --------- SEMÁFOROS ---------
+sem_t sem_cola;     // protege acceso a la cola
+sem_t sem_items;    // cuenta de imágenes disponibles
+sem_t sem_stats;    // protege estadísticas
+sem_t sem_stats_prio;    // da prioridad al gestor
+sem_t sem_mutex_cant;    //mutex de cant
+sem_t sem_mutex_fin_receptor;    //mutex de cant
+
+// --------- HILOS ---------
+void* receptor(void* arg) {
+    while (fin_receptor == 0) {
+        int img = recibir_imagen();
+        if (img == -1) {
+            // fin -> marcar bandera y liberar a procesadores
+            sem_wait(&sem_mutex_fin_receptor);
+            fin_receptor = 1;
+            sem_post(&sem_mutex_fin_receptor);
+            
+            for (int i = 0; i < N_PROCESADORES; i++)
+                sem_post(&sem_items); // desbloquearlos
+        }
+        else{
+            printf("[Receptor] Imagen %d recibida\n", img);
+
+            sem_wait(&sem_cola);
+            poner_imagen(&cola, img);
+            sem_post(&sem_cola);
+
+            sem_post(&sem_items); // nuevo ítem disponible
+        }
+        
+    }
+    return NULL;
+}
+
+void* procesador(void* arg) {
+    int id = (int)(intptr_t)arg;
+    int img1, img2;
+    int sospechoso1, sospechoso2;
+    
+    while (1) {
+        // Tomar primera imagen
+        sem_wait(&sem_items);
+        sem_wait(&sem_mutex_fin_receptor);
+        if (fin_receptor) {
+            sem_wait(&sem_cola);
+            sem_post(&sem_mutex_fin_receptor);
+            if (cola.cabeza == NULL) {
+                sem_post(&sem_cola);
+                break;
+            }
+            img1 = tomar_imagen(&cola);
+            sem_post(&sem_cola);
+        } else {
+            sem_wait(&sem_cola);
+            sem_post(&sem_mutex_fin_receptor);
+            img1 = tomar_imagen(&cola);
+            sem_post(&sem_cola);
+        }
+
+        // Intentar tomar segunda imagen si hay disponible
+        if (sem_trywait(&sem_items) == 0) {
+            sem_wait(&sem_cola);
+            if (cola.cabeza != NULL) {
+                img2 = tomar_imagen(&cola);
+                printf("[Procesador %d] Tomó dos imágenes: %d y %d\n", id, img1, img2);
+            } else {
+                img2 = -1;
+                printf("[Procesador %d] Tomó solo imagen: %d\n", id, img1);
+            }
+            sem_post(&sem_cola);
+        } else {
+            img2 = -1;
+            printf("[Procesador %d] Tomó solo imagen: %d\n", id, img1);
+        }
+        
+        // Procesar primera imagen
+        printf("[Procesador %d] Imagen %d en proceso\n", id, img1);
+        sospechoso1 = procesar_imagen(img1);
+        printf("[Procesador %d] Imagen %d procesada (%s)\n", 
+               id, img1, sospechoso1 ? "SOSPECHOSA" : "ok");
+
+        // Procesar segunda imagen si existe
+        if (img2 != -1) {
+            printf("[Procesador %d] Imagen %d en proceso\n", id, img2);
+            sospechoso2 = procesar_imagen(img2);
+            printf("[Procesador %d] Imagen %d procesada (%s)\n",
+                   id, img2, sospechoso2 ? "SOSPECHOSA" : "ok");
+        }
+
+        // Actualizar estadísticas
+        sem_wait(&sem_mutex_cant);
+        cant_norm++;
+        sem_post(&sem_mutex_cant);
+        
+        sem_wait(&sem_stats);
+        guardar_estadisticas(&global_stats, sospechoso1);
+        if (img2 != -1) {
+            guardar_estadisticas(&global_stats, sospechoso2);
+        }
+
+        sem_wait(&sem_mutex_cant);
+        cant_norm--;
+        if (cant_prio>0){
+            sem_post(&sem_stats_prio);
+        } else {
+            sem_post(&sem_stats);
+        }
+        sem_post(&sem_mutex_cant);
+    }
+    return NULL;
+}
+
+void* gestor(void* arg) {
+    while (1) {
+        sleep(5); // cada 5 segundos
+        printf("Gestor quiere mirar estadistica\n");
+        
+        sem_wait(&sem_mutex_cant);
+        if (cant_norm>0){ 
+        	cant_prio = 1;
+        	sem_post(&sem_mutex_cant);
+        	sem_wait(&sem_stats_prio);       // pide entrar a estadísticas
+        }
+        else{
+        	sem_wait(&sem_stats);
+        	sem_post(&sem_mutex_cant); 
+        }	
+        revisar_estadisticas(&global_stats);
+        sem_wait(&sem_mutex_cant);
+        cant_prio = 0;
+        sem_post(&sem_mutex_cant);
+	sem_post(&sem_stats);              // libera exclusión
+	
+	
+        sem_wait(&sem_mutex_fin_receptor);
+        if (fin_receptor) {
+            sem_wait(&sem_cola);
+            
+            sem_post(&sem_mutex_fin_receptor);
+            int vacia = (cola.cabeza == NULL);
+            sem_post(&sem_cola);
+            if (vacia) break; // terminar
+        }
+        else{
+            sem_post(&sem_mutex_fin_receptor);
+        }
+    }
+    return NULL;
+}
+
+// --------- MAIN ---------
+int main() {
+    srand(time(NULL));
+    init_cola(&cola);
+    init_estadisticas(&global_stats);
+
+    pthread_t h_receptor, h_gestor, h_procs[N_PROCESADORES];
+
+    sem_init(&sem_cola, 0, 1);
+    sem_init(&sem_items, 0, 0);
+    sem_init(&sem_stats, 0, 1);
+    sem_init(&sem_stats_prio, 0, 0);
+    sem_init(&sem_mutex_cant, 0, 1);
+    sem_init(&sem_mutex_fin_receptor, 0, 1);
+
+    for (int i = 0; i < N_PROCESADORES; i++) {
+        pthread_create(&h_procs[i], NULL, procesador, (void*)(intptr_t)i);
+    }
+    
+    pthread_create(&h_receptor, NULL, receptor, NULL);
+    pthread_create(&h_gestor, NULL, gestor, NULL);
+
+    pthread_join(h_receptor, NULL);
+    for (int i = 0; i < N_PROCESADORES; i++) pthread_join(h_procs[i], NULL);
+    pthread_join(h_gestor, NULL);
+
+    sem_destroy(&sem_cola);
+    sem_destroy(&sem_items);
+    sem_destroy(&sem_stats);
+    sem_destroy(&sem_stats_prio);
+    sem_destroy(&sem_mutex_cant);
+    sem_destroy(&sem_mutex_fin_receptor);
+
+    destruir_cola(&cola);
+    destruir_estadisticas(&global_stats);
+
+    printf("Fin de la ejecución\n");
+    return 0;
+}
+
