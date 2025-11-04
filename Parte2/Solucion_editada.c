@@ -5,7 +5,7 @@
 #include <semaphore.h>
 #include "include/auxiliares.h"
 
-#define N_PROCESADORES 4
+#define N_PROCESADORES 6 // Cambiar de 4 a 6
 
 // --------- ESPACIOS COMPARTIDOS ---------
 cola_imagenes_t cola;
@@ -55,49 +55,58 @@ void* procesador(void* arg) {
     int id = (int)(intptr_t)arg;
     int img;
     int sospechoso;
+    int images_processed = 0; // Contador de imágenes procesadas
     
     while (1) {
-        sem_wait(&sem_items);  // espera imagen
+        // Tomar hasta 2 imágenes
+        for (int i = 0; i < 2; i++) {
+            sem_wait(&sem_items);  // espera imagen
 	
-        sem_wait(&sem_mutex_fin_receptor);
-        if (fin_receptor) {
-            // chequear si ya no quedan imágenes en cola
-            sem_wait(&sem_cola);
-            sem_post(&sem_mutex_fin_receptor);
-            if (cola.cabeza == NULL) {
+            sem_wait(&sem_mutex_fin_receptor);
+            if (fin_receptor) {
+                // chequear si ya no quedan imágenes en cola
+                sem_wait(&sem_cola);
+                sem_post(&sem_mutex_fin_receptor);
+                if (cola.cabeza == NULL) {
+                    sem_post(&sem_cola);
+                    break; // salir
+                }
+                // aún hay algo pendiente
+                img = tomar_imagen(&cola);
                 sem_post(&sem_cola);
-                break; // salir
-            }
-            // aún hay algo pendiente
-            img = tomar_imagen(&cola);
-            sem_post(&sem_cola);
-        } else {
+            } else {
         
-            // tomar imagen normalmente
-            sem_wait(&sem_cola);
-            sem_post(&sem_mutex_fin_receptor);
-            img = tomar_imagen(&cola);
-            sem_post(&sem_cola);
+                // tomar imagen normalmente
+                sem_wait(&sem_cola);
+                sem_post(&sem_mutex_fin_receptor);
+                img = tomar_imagen(&cola);
+                sem_post(&sem_cola);
+            }
+        
+        
+            printf("[Procesador %d] Imagen %d en proceso\n",
+                   id, img);
+            sospechoso = procesar_imagen(img);
+            printf("[Procesador %d] Imagen %d procesada (%s)\n",
+                   id, img, sospechoso ? "SOSPECHOSA" : "ok");
+            images_processed++;
+        }
+
+        // Actualizar estadísticas cada 3 imágenes procesadas
+        if (images_processed >= 3) {
+            sem_wait(&sem_mutex_cant);
+            cant_norm += 2; // Incrementar por las 2 imágenes procesadas
+            sem_post(&sem_mutex_cant);
+            
+            sem_wait(&sem_stats); // pide entrar a estadísticas
+        
+            printf("[Procesador %d] editando estadisticas\n", id);
+            guardar_estadisticas(&global_stats, sospechoso);
+            images_processed = 0; // Reiniciar contador
+            sem_post(&sem_stats);
         }
         
-        
-         printf("[Procesador %d] Imagen %d en proceso\n",
-                   id, img);
-         sospechoso = procesar_imagen(img);
-         printf("[Procesador %d] Imagen %d procesada (%s)\n",
-                   id, img, sospechoso ? "SOSPECHOSA" : "ok");
-         
         sem_wait(&sem_mutex_cant);
-        cant_norm++;
-        sem_post(&sem_mutex_cant);
-         
-        sem_wait(&sem_stats);              // pide entrar a estadísticas
-        
-        printf("[Procesador %d] editando estadisticas\n", id);
-        guardar_estadisticas(&global_stats, sospechoso);
-
-        sem_wait(&sem_mutex_cant);
-        cant_norm--;
         if (cant_prio>0){
         	sem_post(&sem_stats_prio);
         }
