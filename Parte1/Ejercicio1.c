@@ -60,6 +60,7 @@ int main() {
 //--------------------- COMPLETAR CODIGO ---------------------------       
             // Sección crítica: proteger acceso al contador
             sem_wait(sem_contador);
+            printf("Hijo PID: %d, Padre PPID: %d, Contador: %d\n", getpid(), getppid(), *contador);
         	incrementar(contador);
             sem_post(sem_contador);
         

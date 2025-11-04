@@ -1,0 +1,59 @@
+Descripcion general del archivo
+-------------------------------------
+Programa concurrente que simula un sistema de procesamiento de imágenes con múltiples hilos:
+- Un proceso receptor que recibe imágenes y las pone en una cola
+- 4 procesadores que toman imágenes de la cola, las procesan y actualizan estadísticas
+- Un gestor que revisa cada 5 segundos las estadísticas con prioridad
+
+Procesos e hilos
+------------------------------
+1. Hilor receptor:
+   - Recibe imágenes continuamente mediante recibir_imagen()
+   - Coloca cada imagen en la cola compartida
+   - Cuando recibe -1, es decir, el final del codigo, marca fin_receptor=1 y libera a los procesadores
+   
+2. Hilos procesadores:
+   - Esperan imágenes disponibles con sem_items
+   - Toman imágenes de la cola mediante FIFO
+   - Procesan cada imagen detectando si son sospechosas o no
+   - Actualizan estadísticas globales en funcion del procesamiento
+   - Y verifican si deben terminar cuando el receptor finaliza
+
+3. Hilo gestor:
+   - Cada 5 segundos revisa las estadísticas globales
+   - Tiene prioridad sobre los procesadores para acceder a estadísticas
+   - Si en los últimos procesos detecta 4 imágenes sospechosas, levanta un aviso
+   - Termina cuando el receptor finaliza y la cola está vacía
+
+Semaforos
+-------------------------
+1. sem_cola:
+   - Mutex binario (valor inicial: 1)
+   - Protege el acceso exclusivo a la cola de imágenes
+   - Evita condiciones de carrera al poner/tomar imágenes
+
+2. sem_items:
+   - Semáforo contador (valor inicial: 0)
+   - Cuenta cuántas imágenes hay disponibles en la cola
+   - Los procesadores esperan aquí hasta que haya imágenes
+   - Se incrementa cuando se encola una imagen, se decrementa al tomarla
+
+3. sem_stats:
+   - Mutex binario (valor inicial: 1)
+   - Protege el acceso exclusivo a las estadísticas globales
+   - Permite que un solo hilo modifique estadísticas a la vez
+
+4. sem_stats_prio:
+   - Semáforo de prioridad (valor inicial: 0)
+   - Permite que el gestor tenga acceso prioritario a estadísticas
+   - Se activa cuando hay procesadores esperando y el gestor necesita acceso
+
+5. sem_mutex_cant:
+   - Mutex binario (valor inicial: 1)
+   - Protege las variables cant_norm y cant_prio
+   - Controla el conteo de procesadores activos y si el gestor tiene prioridad
+
+6. sem_mutex_fin_receptor:
+   - Mutex binario (valor inicial: 1)
+   - Protege la bandera fin_receptor
+   - Evita condiciones de carrera al verificar/establecer el fin del receptors
